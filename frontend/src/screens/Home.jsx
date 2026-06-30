@@ -22,6 +22,7 @@ const Home = () => {
             .then((res) => {
                 console.log(res)
                 setIsModalOpen(false)
+                setProject(prev => [...prev, res.data])
             })
             .catch((error) => {
                 console.log(error)
@@ -39,62 +40,79 @@ const Home = () => {
     }, [])
 
     return (
-        <main className='p-4'>
-            <div className="projects flex flex-wrap gap-3">
-                <button
-                    onClick={() => setIsModalOpen(true)}
-                    className="project p-4 border border-slate-300 rounded-md">
-                    New Project
-                    <i className="ri-link ml-2"></i>
-                </button>
+        <main className='min-h-screen bg-gray-900 text-white p-8'>
+            <div className="max-w-7xl mx-auto">
+                
 
-                {
-                    project.map((project) => (
+                <header className="flex justify-between items-center mb-10">
+                    <h1 className="text-3xl font-bold tracking-tight text-white">Projects</h1>
+                    <button
+                        onClick={() => setIsModalOpen(true)}
+                        className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-500 transition-colors text-white rounded-lg shadow-lg shadow-blue-500/30 font-medium">
+                        <i className="ri-add-line text-lg"></i>
+                        New Project
+                    </button>
+                </header>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                    {project.map((project) => (
                         <div key={project._id}
                             onClick={() => {
                                 navigate(`/project`, {
                                     state: { project }
                                 })
                             }}
-                            className="project flex flex-col gap-2 cursor-pointer p-4 border border-slate-300 rounded-md min-w-52 hover:bg-slate-200">
-                            <h2
-                                className='font-semibold'
-                            >{project.name}</h2>
-
-                            <div className="flex gap-2">
-                                <p> <small> <i className="ri-user-line"></i> Collaborators</small> :</p>
-                                {project.users.length}
+                            className="group flex flex-col gap-4 cursor-pointer p-6 bg-white/5 border border-white/10 rounded-2xl hover:bg-white/10 transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-black/50">
+                            
+                            <div className="flex justify-between items-start">
+                                <h2 className='font-semibold text-xl text-gray-100 truncate w-full'>{project.name}</h2>
+                                <div className="p-2 bg-blue-500/20 text-blue-400 rounded-lg group-hover:bg-blue-500 group-hover:text-white transition-colors">
+                                    <i className="ri-folder-open-line"></i>
+                                </div>
                             </div>
 
+                            <div className="flex items-center gap-2 text-sm text-gray-400 mt-auto pt-4 border-t border-white/5">
+                                <i className="ri-user-line"></i>
+                                <span>{project.users.length} {project.users.length === 1 ? 'Collaborator' : 'Collaborators'}</span>
+                            </div>
                         </div>
-                    ))
-                }
-
-
-            </div>
-
-            {isModalOpen && (
-                <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50">
-                    <div className="bg-white p-6 rounded-md shadow-md w-1/3">
-                        <h2 className="text-xl mb-4">Create New Project</h2>
-                        <form onSubmit={createProject}>
-                            <div className="mb-4">
-                                <label className="block text-sm font-medium text-gray-700">Project Name</label>
-                                <input
-                                    onChange={(e) => setProjectName(e.target.value)}
-                                    value={projectName}
-                                    type="text" className="mt-1 block w-full p-2 border border-gray-300 rounded-md" required />
-                            </div>
-                            <div className="flex justify-end">
-                                <button type="button" className="mr-2 px-4 py-2 bg-gray-300 rounded-md" onClick={() => setIsModalOpen(false)}>Cancel</button>
-                                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-md">Create</button>
-                            </div>
-                        </form>
-                    </div>
+                    ))}
                 </div>
-            )}
 
-
+                {isModalOpen && (
+                    <div className="fixed inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-50">
+                        <div className="bg-gray-800 p-8 rounded-2xl shadow-2xl w-full max-w-md border border-white/10 transform transition-all scale-100 opacity-100">
+                            <h2 className="text-2xl font-bold mb-6 text-white">Create New Project</h2>
+                            <form onSubmit={createProject}>
+                                <div className="mb-6">
+                                    <label className="block text-sm font-medium text-gray-400 mb-2">Project Name</label>
+                                    <input
+                                        onChange={(e) => setProjectName(e.target.value)}
+                                        value={projectName || ''}
+                                        type="text" 
+                                        className="w-full p-3 bg-gray-900 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" 
+                                        placeholder="e.g. My Awesome App"
+                                        required 
+                                    />
+                                </div>
+                                <div className="flex justify-end gap-3">
+                                    <button 
+                                        type="button" 
+                                        className="px-5 py-2.5 text-gray-300 hover:text-white hover:bg-gray-700 rounded-lg transition-colors" 
+                                        onClick={() => setIsModalOpen(false)}>
+                                        Cancel
+                                    </button>
+                                    <button 
+                                        type="submit" 
+                                        className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg shadow-lg shadow-blue-500/30 transition-colors font-medium">
+                                        Create Project
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                )}
+            </div>
         </main>
     )
 }
