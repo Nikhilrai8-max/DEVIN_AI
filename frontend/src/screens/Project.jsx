@@ -33,6 +33,7 @@ const Project = () => {
     const [ selectedUserId, setSelectedUserId ] = useState(new Set()) // Initialized as Set
     const [ project, setProject ] = useState(location.state.project)
     const [ message, setMessage ] = useState('')
+    const [ collaboratorSearch, setCollaboratorSearch ] = useState('')
     const { user } = useContext(UserContext)
     const messageBox = React.createRef()
 
@@ -161,7 +162,9 @@ const Project = () => {
             setFileTree(res.data.project.fileTree || {})
         })
 
-        axios.get('/users/all').then(res => {
+        axios.get('/users/all', {
+            params: { search: collaboratorSearch }
+        }).then(res => {
 
             setUsers(res.data.users)
 
@@ -171,7 +174,7 @@ const Project = () => {
 
         })
 
-    }, [])
+    }, [collaboratorSearch])
 
     function saveFileTree(ft) {
         axios.put('/projects/update-file-tree', {
@@ -219,7 +222,7 @@ const Project = () => {
                             const isMe = msg.sender._id === user._id.toString();
                             return (
                                 <div key={index} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} max-w-[85%] ${isMe ? 'ml-auto' : ''}`}>
-                                    <small className='text-xs text-gray-400 mb-1 ml-1'>{msg.sender.email}</small>
+                                    <small className='text-xs text-gray-400 mb-1 ml-1'>{msg.sender.username || msg.sender.email}</small>
                                     <div className={`p-4 rounded-2xl ${isMe ? 'bg-blue-600 text-white rounded-br-sm' : isAi ? 'bg-gray-900 text-gray-100 rounded-bl-sm border border-white/5' : 'bg-gray-700 text-gray-100 rounded-bl-sm'} shadow-lg shadow-black/20`}>
                                         <div className='text-sm leading-relaxed'>
                                             {isAi ?
@@ -271,7 +274,7 @@ const Project = () => {
                                     <div className='w-10 h-10 rounded-full flex items-center justify-center text-white bg-blue-500/20 text-blue-400'>
                                         <i className="ri-user-smile-line text-lg"></i>
                                     </div>
-                                    <h1 className='font-medium text-gray-200'>{user.email}</h1>
+                                    <h1 className='font-medium text-gray-200'>{user.username || user.email}</h1>
                                 </div>
                             )
                         })}
@@ -437,6 +440,14 @@ const Project = () => {
                                 <i className="ri-close-line text-xl"></i>
                             </button>
                         </header>
+                        <div className="mb-4">
+                            <input
+                                value={collaboratorSearch}
+                                onChange={(e) => setCollaboratorSearch(e.target.value)}
+                                className="w-full rounded-xl border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
+                                placeholder="Search by username or email"
+                            />
+                        </div>
                         <div className="users-list flex flex-col gap-2 mb-16 max-h-72 overflow-auto pr-2 custom-scrollbar">
                             {users.map(user => {
                                 const isSelected = Array.from(selectedUserId).indexOf(user._id) != -1;
@@ -445,7 +456,7 @@ const Project = () => {
                                     <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white ${isSelected ? 'bg-blue-500' : 'bg-gray-700'} transition-colors`}>
                                         <i className="ri-user-smile-line text-lg"></i>
                                     </div>
-                                    <h1 className={`font-medium ${isSelected ? 'text-blue-400' : 'text-gray-200'}`}>{user.email}</h1>
+                                    <h1 className={`font-medium ${isSelected ? 'text-blue-400' : 'text-gray-200'}`}>{user.username || user.email}</h1>
                                 </div>
                             )})}
                         </div>

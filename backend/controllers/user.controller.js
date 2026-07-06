@@ -20,7 +20,7 @@ export const createUserController = async (req, res) => {
 
         res.status(201).json({ user, token });
     } catch (error) {
-        res.status(400).send(error.message);
+        res.status(400).json({ error: error.message });
     }
 }
 
@@ -67,11 +67,15 @@ export const loginController = async (req, res) => {
 }
 
 export const profileController = async (req, res) => {
+    try {
+        const user = await userModel.findById(req.user.id).select('-password');
 
-    res.status(200).json({
-        user: req.user
-    });
-
+        res.status(200).json({
+            user
+        });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
 }
 
 export const logoutController = async (req, res) => {
@@ -95,11 +99,12 @@ export const logoutController = async (req, res) => {
 export const getAllUsersController = async (req, res) => {
     try {
 
-        const loggedInUser = await userModel.findOne({
-            email: req.user.email
-        })
+        const loggedInUser = await userModel.findById(req.user.id);
 
-        const allUsers = await userService.getAllUsers({ userId: loggedInUser._id });
+        const allUsers = await userService.getAllUsers({
+            userId: loggedInUser._id,
+            search: req.query.search
+        });
 
         return res.status(200).json({
             users: allUsers

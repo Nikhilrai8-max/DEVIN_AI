@@ -4,30 +4,32 @@ import { UserContext } from "../context/user.context";
 import axios from "../config/axios";
 
 const Register = () => {
+  const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
 
   const { setUser } = useContext(UserContext);
   const navigate = useNavigate();
 
   function submitHandler(e) {
     e.preventDefault();
+    setErrorMessage("");
 
     axios
       .post("/users/register", {
+        username,
         email,
         password,
       })
       .then((res) => {
-        console.log(res.data);
-
         localStorage.setItem("token", res.data.token);
         setUser(res.data.user);
 
         navigate("/");
       })
       .catch((err) => {
-        console.log(err.response?.data || err);
+        setErrorMessage(err.response?.data?.error || "Unable to create account right now.");
       });
   }
 
@@ -87,6 +89,31 @@ const Register = () => {
             </div>
 
             <form onSubmit={submitHandler} className="space-y-6">
+              {errorMessage && (
+                <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+                  {errorMessage}
+                </div>
+              )}
+
+              <div>
+                <label
+                  htmlFor="username"
+                  className="mb-2 block text-sm font-medium text-gray-300"
+                >
+                  Username
+                </label>
+
+                <input
+                  id="username"
+                  type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="choose a unique username"
+                  required
+                  className="w-full rounded-xl border border-gray-700 bg-[#111827] px-4 py-3 text-white placeholder-gray-500 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
               <div>
                 <label
                   htmlFor="email"
