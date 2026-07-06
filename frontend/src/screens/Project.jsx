@@ -48,6 +48,7 @@ const Project = () => {
 
     const [ webContainer, setWebContainer ] = useState(null)
     const [ iframeUrl, setIframeUrl ] = useState(null)
+    const [ runStatus, setRunStatus ] = useState('')
 
     const [ runProcess, setRunProcess ] = useState(null)
 
@@ -185,6 +186,50 @@ const Project = () => {
         }).catch(err => {
             console.log(err)
         })
+    }
+
+    async function ensureRunnableProject(container, currentTree) {
+        const starterFiles = {
+            'package.json': {
+                file: {
+                    contents: JSON.stringify({
+                        name: 'starter-app',
+                        version: '1.0.0',
+                        private: true,
+                        scripts: {
+                            start: 'node server.js'
+                        }
+                    }, null, 2)
+                }
+            },
+            'server.js': {
+                file: {
+                    contents: `const http = require('http');\nconst fs = require('fs');\nconst path = require('path');\n\nconst port = process.env.PORT || 3000;\nconst root = process.cwd();\n\nconst server = http.createServer((req, res) => {\n  let requestedPath = req.url === '/' ? '/index.html' : req.url;\n  const filePath = path.join(root, requestedPath);\n\n  fs.readFile(filePath, (err, data) => {\n    if (err) {\n      res.writeHead(404, { 'Content-Type': 'text/plain' });\n      res.end('Not found');\n      return;\n    }\n\n    const ext = path.extname(filePath);\n    const contentType = ext === '.html' ? 'text/html' : ext === '.css' ? 'text/css' : 'application/javascript';\n    res.writeHead(200, { 'Content-Type': contentType });\n    res.end(data);\n  });\n});\n\nserver.listen(port, () => {\n  console.log('Server running at http://127.0.0.1:' + port);\n});\n`
+                }
+            },
+            'index.html': {
+                file: {
+                    contents: `<!doctype html>\n<html>\n  <head>\n    <meta charset="UTF-8" />\n    <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n    <title>Starter Preview</title>\n    <style>body{font-family:Arial,sans-serif;background:#0f172a;color:#fff;display:grid;place-items:center;min-height:100vh;margin:0;} .card{padding:2rem;border-radius:16px;background:#111827;border:1px solid #334155;} </style>\n  </head>\n  <body>\n    <div class="card">\n      <h1>Preview is ready</h1>\n      <p>Your project is running successfully.</p>\n    </div>\n  </body>\n</html>`
+                }
+            }
+        };
+
+        const normalizedTree = { ...currentTree };
+        Object.entries(starterFiles).forEach(([name, fileDef]) => {
+            if (!normalizedTree[name]) {
+                normalizedTree[name] = fileDef;
+            }
+        });
+
+        if (!normalizedTree['index.html']) {
+            normalizedTree['index.html'] = starterFiles['index.html'];
+        }
+
+        setFileTree(normalizedTree);
+        setCurrentFile('index.html');
+        setOpenFiles((prev) => [ ...new Set([ ...prev, 'index.html' ]) ]);
+        await container.mount(normalizedTree);
+        return normalizedTree;
     }
 
 
@@ -326,47 +371,47 @@ const Project = () => {
                         <div className="actions flex gap-2 p-2">
                             <button
                                 onClick={async () => {
-                                    await webContainer.mount(fileTree)
+                                    try {
+                                        setRunStatus('Starting preview...')
 
-
-                                    const installProcess = await webContainer.spawn("npm", [ "install" ])
-
-
-
-                                    installProcess.output.pipeTo(new WritableStream({
-                                        write(chunk) {
-                                            console.log(chunk)
+                                        const container = webContainer || await getWebContainer();
+                                        if (!webContainer) {
+                                            setWebContainer(container)
                                         }
-                                    }))
 
-                                    if (runProcess) {
-                                        runProcess.kill()
+                                        const filesToMount = await ensureRunnableProject(container, fileTree)
+                                        saveFileTree(filesToMount)
+
+                                        if (runProcess) {
+                                            runProcess.kill()
+                                        }
+
+                                        const installProcess = await container.spawn('npm', [ 'install' ])
+                                        await installProcess.exit
+
+                                        const tempRunProcess = await container.spawn('npm', [ 'start' ])
+                                        setRunProcess(tempRunProcess)
+                                        setRunStatus('Preview running')
+
+                                        container.on('server-ready', (port, url) => {
+                                            setIframeUrl(url)
+                                        })
+                                    } catch (error) {
+                                        console.error(error)
+                                        setRunStatus(error.message || 'Unable to start preview')
                                     }
-
-                                    let tempRunProcess = await webContainer.spawn("npm", [ "start" ]);
-
-                                    tempRunProcess.output.pipeTo(new WritableStream({
-                                        write(chunk) {
-                                            console.log(chunk)
-                                        }
-                                    }))
-
-                                    setRunProcess(tempRunProcess)
-
-                                    webContainer.on('server-ready', (port, url) => {
-                                        console.log(port, url)
-                                        setIframeUrl(url)
-                                    })
-
                                 }}
                                 className='px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-md flex items-center gap-2 text-sm font-medium transition-colors'
                             >
                                 <i className="ri-play-fill text-lg"></i> Run
                             </button>
-
-
                         </div>
                     </div>
+                    {runStatus && (
+                        <div className="border-b border-white/10 bg-slate-900/80 px-4 py-2 text-sm text-gray-300">
+                            {runStatus}
+                        </div>
+                    )}
                     <div className="bottom flex flex-grow max-w-full shrink overflow-auto bg-gray-900">
                         {
                             fileTree[ currentFile ] ? (
