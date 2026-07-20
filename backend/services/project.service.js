@@ -4,30 +4,42 @@ import mongoose from 'mongoose';
 export const createProject = async ({
     name, userId
 }) => {
-    if (!name) {
+    const trimmedName = name?.trim();
+
+    if (!trimmedName) {
         throw new Error('Name is required')
     }
     if (!userId) {
         throw new Error('UserId is required')
     }
 
+    const normalizedName = trimmedName.toLowerCase();
+
+    const existingProject = await projectModel.findOne({
+        owner: userId,
+        name: normalizedName
+    });
+
+    if (existingProject) {
+        throw new Error('You already have a project with this name');
+    }
+
     let project;
     try {
         project = await projectModel.create({
-            name,
-            users: [ userId ]
+            name: normalizedName,
+            owner: userId,
+            users: [userId]
         });
     } catch (error) {
         if (error.code === 11000) {
-            throw new Error('Project name already exists');
+            throw new Error('You already have a project with this name');
         }
         throw error;
     }
 
     return project;
-
 }
-
 
 export const getAllProjectByUserId = async ({ userId }) => {
     if (!userId) {
@@ -35,8 +47,8 @@ export const getAllProjectByUserId = async ({ userId }) => {
     }
 
     const allUserProjects = await projectModel.find({
-        users: userId
-    })
+        $or: [{ owner: userId }, { users: userId }]
+    }).sort({ createdAt: -1 })
 
     return allUserProjects
 }

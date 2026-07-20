@@ -13,7 +13,7 @@ This AI assistant can understand tasks, generate code, debug issues, explain log
 * 📂 File understanding and project analysis
 * 🌐 Web-integrated responses
 * ⚡ Real-time chat interface
-* 🧩 Multi-language programming support
+* 🧩 Multi-language(coding) programming support
 * 🔍 Error explanation and fixes
 * 📜 Clean and modern UI
 

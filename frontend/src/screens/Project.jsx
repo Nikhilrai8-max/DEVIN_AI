@@ -5,7 +5,8 @@ import axios from '../config/axios'
 import { initializeSocket, receiveMessage, sendMessage } from '../config/socket'
 import Markdown from 'markdown-to-jsx'
 import hljs from 'highlight.js';
-import { getWebContainer } from '../config/webcontainer'
+import { PreviewMessageType } from '@webcontainer/api'
+import { getWebContainer } from '../config/webContainer'
 
 
 function SyntaxHighlightedCode(props) {
@@ -121,14 +122,6 @@ const Project = () => {
 
         initializeSocket(project._id)
 
-        if (!webContainer) {
-            getWebContainer().then(container => {
-                setWebContainer(container)
-                console.log("container started")
-            })
-        }
-
-
         receiveMessage('project-message', data => {
 
             console.log(data)
@@ -140,10 +133,11 @@ const Project = () => {
 
                 console.log(message)
 
-                webContainer?.mount(message.fileTree)
+                const normalizedTree = normalizeFileEntries(message.fileTree || {})
+                webContainer?.mount(toWebContainerTree(normalizedTree)).catch(() => {})
 
                 if (message.fileTree) {
-                    setFileTree(message.fileTree || {})
+                    setFileTree(normalizedTree)
                 }
                 setIsLoadingAi(false)
                 setMessages(prevMessages => [ ...prevMessages, data ]) // Update messages state
@@ -160,7 +154,7 @@ const Project = () => {
             console.log(res.data.project)
 
             setProject(res.data.project)
-            setFileTree(res.data.project.fileTree || {})
+            setFileTree(normalizeFileEntries(res.data.project.fileTree || {}))
         })
 
         axios.get('/users/all', {
@@ -177,6 +171,43 @@ const Project = () => {
 
     }, [collaboratorSearch])
 
+    function parsePackageJson(tree) {
+        try {
+            const packageEntry = tree['package.json']
+            if (!packageEntry?.file?.contents) {
+                return null
+            }
+            return JSON.parse(packageEntry.file.contents)
+        } catch (error) {
+            console.error('Invalid package.json contents', error)
+            return null
+        }
+    }
+
+    function determineRunCommand(tree) {
+        const pkg = parsePackageJson(tree)
+        if (!pkg?.scripts) {
+            return { command: 'npm', args: ['start'] }
+        }
+
+        if (pkg.scripts.dev) {
+            return { command: 'npm', args: ['run', 'dev', '--', '--host', '0.0.0.0'] }
+        }
+
+        if (pkg.scripts.start) {
+            if (pkg.scripts.start.includes('vite')) {
+                return { command: 'npm', args: ['start', '--', '--host', '0.0.0.0'] }
+            }
+            return { command: 'npm', args: ['start'] }
+        }
+
+        if (pkg.scripts.serve) {
+            return { command: 'npm', args: ['run', 'serve', '--', '--host', '0.0.0.0'] }
+        }
+
+        return { command: 'npm', args: ['start'] }
+    }
+
     function saveFileTree(ft) {
         axios.put('/projects/update-file-tree', {
             projectId: project._id,
@@ -188,48 +219,164 @@ const Project = () => {
         })
     }
 
-    async function ensureRunnableProject(container, currentTree) {
-        const starterFiles = {
-            'package.json': {
-                file: {
-                    contents: JSON.stringify({
-                        name: 'starter-app',
-                        version: '1.0.0',
-                        private: true,
-                        scripts: {
-                            start: 'node server.js'
-                        }
-                    }, null, 2)
-                }
-            },
-            'server.js': {
-                file: {
-                    contents: `const http = require('http');\nconst fs = require('fs');\nconst path = require('path');\n\nconst port = process.env.PORT || 3000;\nconst root = process.cwd();\n\nconst server = http.createServer((req, res) => {\n  let requestedPath = req.url === '/' ? '/index.html' : req.url;\n  const filePath = path.join(root, requestedPath);\n\n  fs.readFile(filePath, (err, data) => {\n    if (err) {\n      res.writeHead(404, { 'Content-Type': 'text/plain' });\n      res.end('Not found');\n      return;\n    }\n\n    const ext = path.extname(filePath);\n    const contentType = ext === '.html' ? 'text/html' : ext === '.css' ? 'text/css' : 'application/javascript';\n    res.writeHead(200, { 'Content-Type': contentType });\n    res.end(data);\n  });\n});\n\nserver.listen(port, () => {\n  console.log('Server running at http://127.0.0.1:' + port);\n});\n`
-                }
-            },
-            'index.html': {
-                file: {
-                    contents: `<!doctype html>\n<html>\n  <head>\n    <meta charset="UTF-8" />\n    <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n    <title>Starter Preview</title>\n    <style>body{font-family:Arial,sans-serif;background:#0f172a;color:#fff;display:grid;place-items:center;min-height:100vh;margin:0;} .card{padding:2rem;border-radius:16px;background:#111827;border:1px solid #334155;} </style>\n  </head>\n  <body>\n    <div class="card">\n      <h1>Preview is ready</h1>\n      <p>Your project is running successfully.</p>\n    </div>\n  </body>\n</html>`
-                }
-            }
-        };
-
-        const normalizedTree = { ...currentTree };
-        Object.entries(starterFiles).forEach(([name, fileDef]) => {
-            if (!normalizedTree[name]) {
-                normalizedTree[name] = fileDef;
-            }
-        });
-
-        if (!normalizedTree['index.html']) {
-            normalizedTree['index.html'] = starterFiles['index.html'];
+    function normalizeFileEntries(tree) {
+        if (!tree || typeof tree !== 'object' || Array.isArray(tree)) {
+            return {}
         }
 
-        setFileTree(normalizedTree);
-        setCurrentFile('index.html');
-        setOpenFiles((prev) => [ ...new Set([ ...prev, 'index.html' ]) ]);
-        await container.mount(normalizedTree);
-        return normalizedTree;
+        const normalizedEntries = {}
+
+        const walk = (node, pathParts = []) => {
+            if (!node || typeof node !== 'object' || Array.isArray(node)) {
+                return
+            }
+
+            if (node.file && typeof node.file === 'object') {
+                normalizedEntries[pathParts.join('/')] = node
+                return
+            }
+
+            if (node.directory && typeof node.directory === 'object') {
+                Object.entries(node.directory).forEach(([name, child]) => {
+                    walk(child, [...pathParts, name])
+                })
+                return
+            }
+
+            if (typeof node.contents === 'string') {
+                normalizedEntries[pathParts.join('/')] = { file: { contents: node.contents } }
+                return
+            }
+
+            Object.entries(node).forEach(([name, child]) => {
+                if (name === 'file' || name === 'directory') {
+                    return
+                }
+                walk(child, [...pathParts, name])
+            })
+        }
+
+        Object.entries(tree).forEach(([name, node]) => {
+            walk(node, [name])
+        })
+
+        return normalizedEntries
+    }
+
+    function toWebContainerTree(entries) {
+        const tree = {}
+
+        Object.entries(entries).forEach(([filePath, node]) => {
+            const parts = filePath.split('/').filter(Boolean)
+            if (parts.length === 0) {
+                return
+            }
+
+            let current = tree
+            parts.slice(0, -1).forEach((part) => {
+                if (!current[part]) {
+                    current[part] = { directory: {} }
+                }
+                current = current[part].directory
+            })
+
+            const fileName = parts[parts.length - 1]
+            current[fileName] = node
+        })
+
+        return tree
+    }
+
+    function isViteProject(tree) {
+        const pkg = parsePackageJson(tree)
+        if (!pkg) return false
+
+        const hasViteDependency = [
+            ...Object.keys(pkg.dependencies || {}),
+            ...Object.keys(pkg.devDependencies || {})
+        ].some(dep => dep === 'vite' || dep.startsWith('@vitejs/') || dep === 'react' || dep === 'react-dom')
+
+        const hasViteScript = pkg.scripts && (pkg.scripts.dev || pkg.scripts.start?.includes('vite') || pkg.scripts.serve)
+        return hasViteDependency && hasViteScript
+    }
+
+    function createDefaultViteIndexHtml(tree) {
+        const pkg = parsePackageJson(tree)
+        const isReact = [
+            ...Object.keys(pkg.dependencies || {}),
+            ...Object.keys(pkg.devDependencies || {})
+        ].some(dep => dep === 'react' || dep === 'react-dom' || dep.startsWith('react-'))
+
+        const appMount = isReact ? '<div id="root"></div>' : '<div id="app"></div>'
+        const scriptSrc = isReact ? 'src/main.jsx' : 'src/main.js'
+
+        return {
+            file: {
+                contents: `<!DOCTYPE html>\n<html lang="en">\n  <head>\n    <meta charset="UTF-8" />\n    <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n    <title>Project Preview</title>\n  </head>\n  <body>\n    ${appMount}\n    <script type="module" src="/${scriptSrc}"></script>\n  </body>\n</html>`
+            }
+        }
+    }
+
+    const projectMountPoint = '/project'
+
+    async function ensureRunnableProject(container, currentTree) {
+        const normalizedEntries = normalizeFileEntries(currentTree || {})
+        const packageJson = parsePackageJson(normalizedEntries)
+
+        try {
+            await container.fs.rm(projectMountPoint, { recursive: true })
+        } catch (err) {
+            // ignore missing path
+        }
+
+        try {
+            await container.fs.mkdir(projectMountPoint, { recursive: true })
+        } catch (err) {
+            // ignore if the folder already exists
+        }
+
+        if (!packageJson) {
+            const starterFiles = {
+                'package.json': {
+                    file: {
+                        contents: JSON.stringify({
+                            name: 'starter-app',
+                            version: '1.0.0',
+                            private: true,
+                            scripts: {
+                                start: 'node server.js'
+                            }
+                        }, null, 2)
+                    }
+                },
+                'server.js': {
+                    file: {
+                        contents: `const http = require('http');\nconst fs = require('fs');\nconst path = require('path');\n\nconst port = process.env.PORT || 3000;\nconst root = process.cwd();\n\nconst server = http.createServer((req, res) => {\n  let requestedPath = req.url === '/' ? '/index.html' : req.url;\n  const filePath = path.join(root, requestedPath);\n\n  fs.readFile(filePath, (err, data) => {\n    if (err) {\n      res.writeHead(404, { 'Content-Type': 'text/plain' });\n      res.end('Not found');\n      return;\n    }\n\n    const ext = path.extname(filePath);\n    const contentType = ext === '.html' ? 'text/html' : ext === '.css' ? 'text/css' : 'application/javascript';\n    res.writeHead(200, { 'Content-Type': contentType });\n    res.end(data);\n  });\n});\n\nserver.listen(port, () => {\n  console.log('Server running at http://127.0.0.1:' + port);\n});\n`
+                    }
+                },
+                'index.html': {
+                    file: {
+                        contents: `<!doctype html>\n<html>\n  <head>\n    <meta charset="UTF-8" />\n    <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n    <title>Starter Preview</title>\n    <style>body{font-family:Arial,sans-serif;background:#0f172a;color:#fff;display:grid;place-items:center;min-height:100vh;margin:0;} .card{padding:2rem;border-radius:16px;background:#111827;border:1px solid #334155;} </style>\n  </head>\n  <body>\n    <div class="card">\n      <h1>Preview is ready</h1>\n      <p>Your project is running successfully.</p>\n    </div>\n  </body>\n</html>`
+                    }
+                }
+            }
+
+            Object.entries(starterFiles).forEach(([name, fileDef]) => {
+                normalizedEntries[name] = fileDef
+            })
+        } else if (isViteProject(normalizedEntries) && !normalizedEntries['index.html']) {
+            normalizedEntries['index.html'] = createDefaultViteIndexHtml(normalizedEntries)
+        }
+
+        setFileTree(normalizedEntries)
+        if (!normalizedEntries['index.html']) {
+            setCurrentFile(Object.keys(normalizedEntries)[0] || 'index.html')
+        } else {
+            setCurrentFile('index.html')
+        }
+        setOpenFiles((prev) => [ ...new Set([ ...prev, 'index.html' ]) ])
+        await container.mount(toWebContainerTree(normalizedEntries), { mountPoint: projectMountPoint })
+        return normalizedEntries
     }
 
 
@@ -265,8 +412,9 @@ const Project = () => {
                         {messages.map((msg, index) => {
                             const isAi = msg.sender._id === 'ai';
                             const isMe = msg.sender._id === user._id.toString();
+                            const messageKey = msg._id || `${msg.sender?._id || 'sender'}-${msg.message || 'message'}-${index}`;
                             return (
-                                <div key={index} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} max-w-[85%] ${isMe ? 'ml-auto' : ''}`}>
+                                <div key={messageKey} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} max-w-[85%] ${isMe ? 'ml-auto' : ''}`}>
                                     <small className='text-xs text-gray-400 mb-1 ml-1'>{msg.sender.username || msg.sender.email}</small>
                                     <div className={`p-4 rounded-2xl ${isMe ? 'bg-blue-600 text-white rounded-br-sm' : isAi ? 'bg-gray-900 text-gray-100 rounded-bl-sm border border-white/5' : 'bg-gray-700 text-gray-100 rounded-bl-sm'} shadow-lg shadow-black/20`}>
                                         <div className='text-sm leading-relaxed'>
@@ -333,9 +481,9 @@ const Project = () => {
                     <div className="p-4 border-b border-white/10 text-xs font-semibold text-gray-400 uppercase tracking-wider">Explorer</div>
                     <div className="file-tree w-full flex-grow overflow-auto py-2">
                         {
-                            Object.keys(fileTree).map((file, index) => (
+                            Object.keys(fileTree).map((file) => (
                                 <button
-                                    key={index}
+                                    key={file}
                                     onClick={() => {
                                         setCurrentFile(file)
                                         setOpenFiles([ ...new Set([ ...openFiles, file ]) ])
@@ -356,8 +504,8 @@ const Project = () => {
 
                         <div className="files flex">
                             {
-                                openFiles.map((file, index) => (
-                                    <div key={index} className={`open-file cursor-pointer p-3 px-4 flex items-center gap-3 border-r border-white/10 transition-colors ${currentFile === file ? 'bg-gray-800 text-white' : 'bg-gray-900 text-gray-400 hover:bg-white/5 hover:text-gray-200'}`}>
+                                openFiles.map((file) => (
+                                    <div key={file} className={`open-file cursor-pointer p-3 px-4 flex items-center gap-3 border-r border-white/10 transition-colors ${currentFile === file ? 'bg-gray-800 text-white' : 'bg-gray-900 text-gray-400 hover:bg-white/5 hover:text-gray-200'}`}>
                                         <button onClick={() => setCurrentFile(file)} className="flex items-center gap-2 text-sm font-medium">
                                             <i className="ri-file-code-line"></i>
                                             {file}
@@ -373,6 +521,7 @@ const Project = () => {
                                 onClick={async () => {
                                     try {
                                         setRunStatus('Starting preview...')
+                                        setIframeUrl(null)
 
                                         const container = webContainer || await getWebContainer();
                                         if (!webContainer) {
@@ -383,22 +532,92 @@ const Project = () => {
                                         saveFileTree(filesToMount)
 
                                         if (runProcess) {
-                                            runProcess.kill()
+                                            try {
+                                                runProcess.kill()
+                                            } catch (killError) {
+                                                console.warn('Failed to kill previous run process', killError)
+                                            }
                                         }
 
-                                        const installProcess = await container.spawn('npm', [ 'install' ])
-                                        await installProcess.exit
+                                        const previewReady = new Promise((resolve) => {
+                                            let unsubscribeServer
+                                            let unsubscribePort
+                                            let unsubscribePreview
+                                            const cleanup = () => {
+                                                if (typeof unsubscribeServer === 'function') {
+                                                    unsubscribeServer()
+                                                }
+                                                if (typeof unsubscribePort === 'function') {
+                                                    unsubscribePort()
+                                                }
+                                                if (typeof unsubscribePreview === 'function') {
+                                                    unsubscribePreview()
+                                                }
+                                            }
 
-                                        const tempRunProcess = await container.spawn('npm', [ 'start' ])
-                                        setRunProcess(tempRunProcess)
-                                        setRunStatus('Preview running')
+                                            const finish = (port, url) => {
+                                                console.log('[WebContainer] server-ready', { port, url })
+                                                cleanup()
+                                                resolve(url || null)
+                                            }
 
-                                        container.on('server-ready', (port, url) => {
-                                            setIframeUrl(url)
+                                            unsubscribeServer = container.on('server-ready', finish)
+                                            unsubscribePort = container.on('port', (port, type, url) => {
+                                                console.log('[WebContainer] port event', { port, type, url })
+                                                if (type === 'open' && url) {
+                                                    cleanup()
+                                                    resolve(url)
+                                                }
+                                            })
+                                            unsubscribePreview = container.on('preview-message', (message) => {
+                                                console.log('[WebContainer] preview-message', message)
+                                                if (message.type === PreviewMessageType.ConsoleError || message.type === PreviewMessageType.UncaughtException || message.type === PreviewMessageType.UnhandledRejection) {
+                                                    setRunStatus(`Preview error: ${message.message}`)
+                                                }
+                                            })
+
+                                            setTimeout(() => {
+                                                cleanup()
+                                                resolve(null)
+                                            }, 15000)
                                         })
+
+                                        const cwdPath = projectMountPoint
+                                        const installProcess = await container.spawn('npm', ['install'], { cwd: cwdPath })
+                                        const installExitCode = await installProcess.exit
+                                        if (installExitCode !== 0) {
+                                            throw new Error(`npm install failed with exit code ${installExitCode}`)
+                                        }
+
+                                        const runCommand = determineRunCommand(filesToMount)
+                                        console.log('[WebContainer] running command', runCommand, 'cwd', cwdPath)
+                                        const tempRunProcess = await container.spawn(runCommand.command, runCommand.args, { cwd: cwdPath, output: true, stdout: true, stderr: true })
+                                        setRunProcess(tempRunProcess)
+
+                                        ;(async () => {
+                                            try {
+                                                const reader = tempRunProcess.output.getReader()
+                                                while (true) {
+                                                    const { done, value } = await reader.read()
+                                                    if (done) break
+                                                    console.log('[WebContainer run output]', value)
+                                                }
+                                            } catch (streamError) {
+                                                console.warn('Failed to read run output', streamError)
+                                            }
+                                        })()
+
+                                        const previewUrl = await previewReady
+                                        if (previewUrl) {
+                                            setIframeUrl(previewUrl)
+                                            setRunStatus(`Preview running at ${previewUrl}`)
+                                        } else {
+                                            setRunStatus('Preview is starting, but the preview URL could not be detected yet. Please wait a few seconds or check your browser console for WebContainer logs.')
+                                        }
                                     } catch (error) {
                                         console.error(error)
-                                        setRunStatus(error.message || 'Unable to start preview')
+                                        const detail = error?.message || 'Unable to start preview'
+                                        setRunStatus(detail)
                                     }
                                 }}
                                 className='px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-md flex items-center gap-2 text-sm font-medium transition-colors'
