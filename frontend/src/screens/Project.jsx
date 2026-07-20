@@ -87,6 +87,7 @@ const Project = () => {
     }
 
     const send = () => {
+        if (!message || !message.trim()) return;
 
         if (message.includes('@ai')) {
             setIsLoadingAi(true)
@@ -557,6 +558,7 @@ const Project = () => {
                             <input
                                 value={message}
                                 onChange={(e) => setMessage(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter') send(); }}
                                 className='p-3 px-4 bg-transparent border-none outline-none flex-grow text-white placeholder-gray-500' type="text" placeholder='Type a message...' />
                             <button
                                 onClick={send}

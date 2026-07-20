@@ -9,32 +9,39 @@ const UserAuth = ({ children }) => {
     const token = localStorage.getItem('token')
     const navigate = useNavigate()
 
-
-
-
     useEffect(() => {
-        if (user) {
-            setLoading(false)
-        }
-
         if (!token) {
             navigate('/login')
+            return
         }
 
-        if (!user) {
-            navigate('/login')
+        if (user) {
+            setLoading(false)
+        } else {
+            const storedUser = localStorage.getItem('user')
+            if (!storedUser) {
+                navigate('/login')
+            } else {
+                setLoading(false)
+            }
         }
-
-    }, [])
+    }, [user, token, navigate])
 
     if (loading) {
-        return <div>Loading...</div>
+        return (
+            <div className="flex h-screen w-screen items-center justify-center bg-[#0B1120] text-white">
+                <div className="flex items-center gap-3">
+                    <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                    <p className="text-sm">Loading...</p>
+                </div>
+            </div>
+        )
     }
-
 
     return (
         <>
-            {children}</>
+            {children}
+        </>
     )
 }
 
