@@ -282,7 +282,7 @@ const Register = () => {
         </div>
 
         <div>
-          © {new Date().getFullYear()} CodeSmith Inc. All rights reserved.
+          © {new Date().getFullYear()} CodeSmith Inc. Designed & Developed by <span className="font-semibold text-blue-500">Nikhil Rai</span>. All rights reserved.
         </div>
       </footer>
     </div>
