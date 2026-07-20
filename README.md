@@ -1,6 +1,6 @@
-# 🤖 AI Software Engineer Assistant (Devin-like)
+# 🤖 CodeSmith - AI Software Engineer Workspace
 
-An autonomous AI chatbot inspired by Devin, powered by Google Gemini.
+An autonomous AI coding workspace powered by Google Gemini and WebContainer.
 This AI assistant can understand tasks, generate code, debug issues, explain logic, and assist developers in real-time.
 
 ---
@@ -26,13 +26,14 @@ This AI assistant can understand tasks, generate code, debug issues, explain log
 * **AI Model:** Google Gemini API
 * **Database:** MongoDB / Firebase
 * **Authentication:** JWT / Firebase Auth
-* **Deployment:** Vercel / Render / Docker
+* **Deployment:** Vercel / Render 
 
 ---
 
 ## 📸 Screenshots
 
 *Add screenshots of your chatbot UI here.*
+![alt text](image.png)
 
 ---
 

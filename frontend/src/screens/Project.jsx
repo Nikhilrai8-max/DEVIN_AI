@@ -28,6 +28,7 @@ function SyntaxHighlightedCode(props) {
 const Project = () => {
 
     const location = useLocation()
+    const navigate = useNavigate()
 
     const [ isSidePanelOpen, setIsSidePanelOpen ] = useState(false)
     const [ isModalOpen, setIsModalOpen ] = useState(false)
@@ -52,6 +53,7 @@ const Project = () => {
     const [ runStatus, setRunStatus ] = useState('')
 
     const [ runProcess, setRunProcess ] = useState(null)
+    const activeListenersRef = useRef([])
 
     const handleUserClick = (id) => {
         setSelectedUserId(prevSelectedUserId => {
@@ -133,8 +135,9 @@ const Project = () => {
 
                 console.log(message)
 
-                const normalizedTree = normalizeFileEntries(message.fileTree || {})
-                webContainer?.mount(toWebContainerTree(normalizedTree)).catch(() => {})
+                if (webContainer && message.fileTree) {
+                    writeFilesToContainer(webContainer, normalizedTree, projectMountPoint).catch(() => {})
+                }
 
                 if (message.fileTree) {
                     setFileTree(normalizedTree)
@@ -174,10 +177,13 @@ const Project = () => {
     function parsePackageJson(tree) {
         try {
             const packageEntry = tree['package.json']
-            if (!packageEntry?.file?.contents) {
-                return null
+            if (!packageEntry) return null
+            if (typeof packageEntry === 'string') return JSON.parse(packageEntry)
+            const contents = packageEntry?.file?.contents || packageEntry?.contents
+            if (typeof contents === 'string') {
+                return JSON.parse(contents)
             }
-            return JSON.parse(packageEntry.file.contents)
+            return null
         } catch (error) {
             console.error('Invalid package.json contents', error)
             return null
@@ -186,26 +192,38 @@ const Project = () => {
 
     function determineRunCommand(tree) {
         const pkg = parsePackageJson(tree)
-        if (!pkg?.scripts) {
-            return { command: 'npm', args: ['start'] }
-        }
 
-        if (pkg.scripts.dev) {
-            return { command: 'npm', args: ['run', 'dev', '--', '--host', '0.0.0.0'] }
-        }
-
-        if (pkg.scripts.start) {
-            if (pkg.scripts.start.includes('vite')) {
-                return { command: 'npm', args: ['start', '--', '--host', '0.0.0.0'] }
+        if (pkg?.scripts) {
+            if (pkg.scripts.dev) {
+                return { command: 'npm', args: ['run', 'dev', '--', '--host', '0.0.0.0'] }
             }
-            return { command: 'npm', args: ['start'] }
+            if (pkg.scripts.start) {
+                return { command: 'npm', args: ['start'] }
+            }
+            if (pkg.scripts.serve) {
+                return { command: 'npm', args: ['run', 'serve', '--', '--host', '0.0.0.0'] }
+            }
         }
 
-        if (pkg.scripts.serve) {
-            return { command: 'npm', args: ['run', 'serve', '--', '--host', '0.0.0.0'] }
+        const isVite = isViteProject(tree) || pkg?.scripts?.dev?.includes('vite') || pkg?.scripts?.start?.includes('vite')
+        if (isVite) {
+            return { command: 'npx', args: ['vite', '--host', '0.0.0.0'] }
         }
 
-        return { command: 'npm', args: ['start'] }
+        if (tree['server.js']) {
+            return { command: 'node', args: ['server.js'] }
+        }
+        if (tree['index.js']) {
+            return { command: 'node', args: ['index.js'] }
+        }
+        if (tree['app.js']) {
+            return { command: 'node', args: ['app.js'] }
+        }
+        if (tree['main.js']) {
+            return { command: 'node', args: ['main.js'] }
+        }
+
+        return { command: 'node', args: ['server.js'] }
     }
 
     function saveFileTree(ft) {
@@ -319,15 +337,31 @@ const Project = () => {
 
     const projectMountPoint = '/project'
 
+    async function writeFilesToContainer(container, entries, baseDir = projectMountPoint) {
+        for (const [filePath, fileNode] of Object.entries(entries)) {
+            if (!filePath) continue;
+            const cleanPath = filePath.replace(/\\/g, '/');
+            const fullPath = `${baseDir}/${cleanPath}`.replace(/\/+/g, '/');
+            const lastSlash = fullPath.lastIndexOf('/');
+            if (lastSlash > 0) {
+                const dir = fullPath.substring(0, lastSlash);
+                await container.fs.mkdir(dir, { recursive: true }).catch(() => {});
+            }
+            let contents = '';
+            if (typeof fileNode === 'string') {
+                contents = fileNode;
+            } else if (fileNode?.file?.contents !== undefined) {
+                contents = fileNode.file.contents;
+            } else if (fileNode?.contents !== undefined) {
+                contents = fileNode.contents;
+            }
+            await container.fs.writeFile(fullPath, contents);
+        }
+    }
+
     async function ensureRunnableProject(container, currentTree) {
         const normalizedEntries = normalizeFileEntries(currentTree || {})
         const packageJson = parsePackageJson(normalizedEntries)
-
-        try {
-            await container.fs.rm(projectMountPoint, { recursive: true })
-        } catch (err) {
-            // ignore missing path
-        }
 
         try {
             await container.fs.mkdir(projectMountPoint, { recursive: true })
@@ -375,7 +409,7 @@ const Project = () => {
             setCurrentFile('index.html')
         }
         setOpenFiles((prev) => [ ...new Set([ ...prev, 'index.html' ]) ])
-        await container.mount(toWebContainerTree(normalizedEntries), { mountPoint: projectMountPoint })
+        await writeFilesToContainer(container, normalizedEntries, projectMountPoint)
         return normalizedEntries
     }
 
@@ -393,18 +427,64 @@ const Project = () => {
     }, [messages, isLoadingAi])
 
     return (
-        <main className='h-screen w-screen flex bg-gray-900 text-white font-sans'>
-            <section className="left relative flex flex-col h-screen min-w-96 max-w-96 border-r border-white/10 bg-gray-800">
-                <header className='flex justify-between items-center p-4 w-full bg-gray-900 border-b border-white/10 absolute z-10 top-0 shadow-md'>
-                    <button className='flex gap-2 items-center text-gray-300 hover:text-white transition-colors' onClick={() => setIsModalOpen(true)}>
-                        <i className="ri-add-line text-lg"></i>
-                        <span className="font-medium">Add collaborator</span>
+        <main className='h-screen w-screen flex flex-col bg-[#0B1120] text-white font-sans overflow-hidden'>
+            {/* Top Navigation Bar */}
+            <header className="h-14 bg-[#0B1120] border-b border-white/10 px-4 flex items-center justify-between shrink-0 z-30 shadow-md">
+                <div className="flex items-center gap-4">
+                    <button
+                        onClick={() => navigate('/')}
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-semibold text-gray-300 hover:text-white transition-all border border-white/10"
+                    >
+                        <i className="ri-arrow-left-line text-sm"></i>
+                        Dashboard
                     </button>
-                    <button onClick={() => setIsSidePanelOpen(!isSidePanelOpen)} className='p-2 text-gray-300 hover:text-white transition-colors rounded-lg hover:bg-white/5'>
-                        <i className="ri-group-line text-xl"></i>
+                    <div className="h-4 w-[1px] bg-white/10"></div>
+                    <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-white text-xs font-bold shadow-md shadow-blue-500/20">
+                            <i className="ri-sparkling-fill"></i>
+                        </div>
+                        <span className="font-bold text-sm bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent truncate max-w-xs">{project?.name || 'Workspace Project'}</span>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> Active Room
+                        </span>
+                    </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                    <button
+                        onClick={() => setIsModalOpen(true)}
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 text-xs font-semibold transition-all"
+                    >
+                        <i className="ri-user-add-line text-sm"></i>
+                        Add Collaborators
                     </button>
-                </header>
-                <div className="conversation-area pt-20 pb-20 flex-grow flex flex-col h-full relative">
+                    <button
+                        onClick={() => setIsSidePanelOpen(!isSidePanelOpen)}
+                        className="p-2 text-gray-400 hover:text-white rounded-xl hover:bg-white/5 transition-colors relative"
+                        title="View Room Teammates"
+                    >
+                        <i className="ri-group-line text-lg"></i>
+                        {(project.users?.length || 0) > 0 && (
+                            <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-blue-500 text-[10px] text-white font-bold flex items-center justify-center">
+                                {project.users.length}
+                            </span>
+                        )}
+                    </button>
+                </div>
+            </header>
+
+            <div className="flex flex-grow h-[calc(100vh-3.5rem)] overflow-hidden">
+                <section className="left relative flex flex-col h-full min-w-96 max-w-96 border-r border-white/10 bg-slate-900/60">
+                    <header className='flex justify-between items-center p-3.5 px-4 w-full bg-slate-900/90 border-b border-white/10 absolute z-10 top-0 backdrop-blur-md'>
+                        <div className="flex items-center gap-2">
+                            <i className="ri-chat-voice-line text-blue-400"></i>
+                            <span className="font-bold text-sm text-gray-200">AI & Teammate Room</span>
+                        </div>
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 font-mono border border-blue-500/20">
+                            @ai helper
+                        </span>
+                    </header>
+                    <div className="conversation-area pt-16 pb-20 flex-grow flex flex-col h-full relative">
 
                     <div
                         ref={messageBox}
@@ -534,66 +614,121 @@ const Project = () => {
                                         if (runProcess) {
                                             try {
                                                 runProcess.kill()
+                                                await Promise.race([
+                                                    runProcess.exit,
+                                                    new Promise(res => setTimeout(res, 800))
+                                                ])
                                             } catch (killError) {
                                                 console.warn('Failed to kill previous run process', killError)
                                             }
+                                            setRunProcess(null)
                                         }
 
-                                        const previewReady = new Promise((resolve) => {
-                                            let unsubscribeServer
-                                            let unsubscribePort
-                                            let unsubscribePreview
-                                            const cleanup = () => {
-                                                if (typeof unsubscribeServer === 'function') {
-                                                    unsubscribeServer()
-                                                }
-                                                if (typeof unsubscribePort === 'function') {
-                                                    unsubscribePort()
-                                                }
-                                                if (typeof unsubscribePreview === 'function') {
-                                                    unsubscribePreview()
-                                                }
-                                            }
+                                        if (activeListenersRef.current && activeListenersRef.current.length > 0) {
+                                            activeListenersRef.current.forEach(unsub => {
+                                                if (typeof unsub === 'function') unsub()
+                                            })
+                                            activeListenersRef.current = []
+                                        }
 
+                                        const cwdPath = projectMountPoint
+
+                                        // Check if npm install is needed
+                                        const pkgJson = parsePackageJson(filesToMount)
+                                        const hasDeps = pkgJson && (
+                                            (pkgJson.dependencies && Object.keys(pkgJson.dependencies).length > 0) ||
+                                            (pkgJson.devDependencies && Object.keys(pkgJson.devDependencies).length > 0)
+                                        )
+
+                                        let needsInstall = false
+                                        if (hasDeps) {
+                                            try {
+                                                const mountedFiles = await container.fs.readdir(cwdPath)
+                                                if (!mountedFiles.includes('node_modules')) {
+                                                    needsInstall = true
+                                                } else {
+                                                    const nmContents = await container.fs.readdir(`${cwdPath}/node_modules`)
+                                                    if (!nmContents || nmContents.length === 0) {
+                                                        needsInstall = true
+                                                    }
+                                                }
+                                            } catch (fsErr) {
+                                                needsInstall = true
+                                            }
+                                        }
+
+                                        if (needsInstall) {
+                                            setRunStatus('Installing dependencies (this may take a moment)...')
+                                            const installProcess = await container.spawn('npm', ['install'], { cwd: cwdPath, output: true, stdout: true, stderr: true })
+                                            
+                                            const reader = installProcess.output.getReader()
+                                            ;(async () => {
+                                                try {
+                                                    while (true) {
+                                                        const { done, value } = await reader.read()
+                                                        if (done) break
+                                                        if (value) {
+                                                            const lastLine = value.trim().split('\n').pop()
+                                                            if (lastLine) {
+                                                                setRunStatus(`[Installing]: ${lastLine.slice(-80)}`)
+                                                            }
+                                                        }
+                                                    }
+                                                } catch (e) {}
+                                            })()
+
+                                            const installExitCode = await installProcess.exit
+                                            if (installExitCode !== 0) {
+                                                throw new Error(`npm install failed with exit code ${installExitCode}`)
+                                            }
+                                        }
+
+                                        setRunStatus('Starting application...')
+
+                                        let resolvedUrl = null
+                                        const previewReady = new Promise((resolve) => {
                                             const finish = (port, url) => {
                                                 console.log('[WebContainer] server-ready', { port, url })
-                                                cleanup()
-                                                resolve(url || null)
+                                                const targetUrl = url || (port ? `http://localhost:${port}` : null)
+                                                if (targetUrl && !resolvedUrl) {
+                                                    resolvedUrl = targetUrl
+                                                    setIframeUrl(targetUrl)
+                                                    setRunStatus(`Preview running at ${targetUrl}`)
+                                                    resolve(targetUrl)
+                                                }
                                             }
 
-                                            unsubscribeServer = container.on('server-ready', finish)
-                                            unsubscribePort = container.on('port', (port, type, url) => {
+                                            const unSubServer = container.on('server-ready', (port, url) => finish(port, url))
+                                            const unSubPort = container.on('port', (port, type, url) => {
                                                 console.log('[WebContainer] port event', { port, type, url })
                                                 if (type === 'open' && url) {
-                                                    cleanup()
-                                                    resolve(url)
+                                                    finish(port, url)
+                                                } else if (type === 'open' && port) {
+                                                    finish(port, `http://localhost:${port}`)
                                                 }
                                             })
-                                            unsubscribePreview = container.on('preview-message', (message) => {
+                                            const unSubPreview = container.on('preview-message', (message) => {
                                                 console.log('[WebContainer] preview-message', message)
                                                 if (message.type === PreviewMessageType.ConsoleError || message.type === PreviewMessageType.UncaughtException || message.type === PreviewMessageType.UnhandledRejection) {
                                                     setRunStatus(`Preview error: ${message.message}`)
                                                 }
                                             })
 
-                                            setTimeout(() => {
-                                                cleanup()
-                                                resolve(null)
-                                            }, 15000)
-                                        })
+                                            activeListenersRef.current = [unSubServer, unSubPort, unSubPreview]
 
-                                        const cwdPath = projectMountPoint
-                                        const installProcess = await container.spawn('npm', ['install'], { cwd: cwdPath })
-                                        const installExitCode = await installProcess.exit
-                                        if (installExitCode !== 0) {
-                                            throw new Error(`npm install failed with exit code ${installExitCode}`)
-                                        }
+                                            setTimeout(() => {
+                                                if (!resolvedUrl) {
+                                                    resolve(null)
+                                                }
+                                            }, 25000)
+                                        })
 
                                         const runCommand = determineRunCommand(filesToMount)
                                         console.log('[WebContainer] running command', runCommand, 'cwd', cwdPath)
                                         const tempRunProcess = await container.spawn(runCommand.command, runCommand.args, { cwd: cwdPath, output: true, stdout: true, stderr: true })
                                         setRunProcess(tempRunProcess)
 
+                                        let processOutput = []
                                         ;(async () => {
                                             try {
                                                 const reader = tempRunProcess.output.getReader()
@@ -601,19 +736,39 @@ const Project = () => {
                                                     const { done, value } = await reader.read()
                                                     if (done) break
                                                     console.log('[WebContainer run output]', value)
+                                                    if (value) {
+                                                        processOutput.push(value)
+                                                        const lastLine = value.trim().split('\n').pop()
+                                                        if (lastLine && !resolvedUrl) {
+                                                            setRunStatus(`Output: ${lastLine}`)
+                                                        }
+                                                        const match = value.match(/https?:\/\/(localhost|127\.0\.0\.1):\d+/i)
+                                                        if (match && !resolvedUrl) {
+                                                            const foundUrl = match[0].replace('127.0.0.1', 'localhost')
+                                                            resolvedUrl = foundUrl
+                                                            setIframeUrl(foundUrl)
+                                                            setRunStatus(`Preview running at ${foundUrl}`)
+                                                        }
+                                                    }
                                                 }
                                             } catch (streamError) {
                                                 console.warn('Failed to read run output', streamError)
                                             }
                                         })()
 
+                                        tempRunProcess.exit.then((exitCode) => {
+                                            console.log('[WebContainer process exit code]', exitCode)
+                                            if (exitCode !== 0 && !resolvedUrl) {
+                                                const logSnippet = processOutput.join('').trim()
+                                                setRunStatus(`App failed to start (exit code ${exitCode}): ${logSnippet.slice(-150)}`)
+                                            }
+                                        })
+
                                         const previewUrl = await previewReady
-                                        if (previewUrl) {
-                                            setIframeUrl(previewUrl)
-                                            setRunStatus(`Preview running at ${previewUrl}`)
-                                        } else {
+                                        if (!previewUrl && !resolvedUrl) {
                                             setRunStatus('Preview is starting, but the preview URL could not be detected yet. Please wait a few seconds or check your browser console for WebContainer logs.')
                                         }
+
                                     } catch (error) {
                                         console.error(error)
                                         const detail = error?.message || 'Unable to start preview'
@@ -694,6 +849,7 @@ const Project = () => {
                 }
 
             </section>
+        </div>
 
             {isModalOpen && (
                 <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
