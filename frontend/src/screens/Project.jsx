@@ -398,8 +398,43 @@ const Project = () => {
             Object.entries(starterFiles).forEach(([name, fileDef]) => {
                 normalizedEntries[name] = fileDef
             })
-        } else if (isViteProject(normalizedEntries) && !normalizedEntries['index.html']) {
-            normalizedEntries['index.html'] = createDefaultViteIndexHtml(normalizedEntries)
+        } else {
+            let modifiedPkg = false
+            const deps = packageJson.dependencies || {}
+            const devDeps = packageJson.devDependencies || {}
+            const scripts = packageJson.scripts || {}
+
+            const usesVite = Object.values(scripts).some(s => typeof s === 'string' && s.includes('vite')) ||
+                             normalizedEntries['vite.config.js'] ||
+                             normalizedEntries['vite.config.ts'] ||
+                             isViteProject(normalizedEntries)
+
+            if (usesVite) {
+                if (!deps.vite && !devDeps.vite) {
+                    packageJson.devDependencies = { ...(packageJson.devDependencies || {}), vite: '^5.4.11' }
+                    modifiedPkg = true
+                }
+                const hasReact = deps.react || devDeps.react || Object.keys(normalizedEntries).some(f => f.endsWith('.jsx') || f.endsWith('.tsx'))
+                if (hasReact && !deps['@vitejs/plugin-react'] && !devDeps['@vitejs/plugin-react']) {
+                    packageJson.devDependencies = {
+                        ...(packageJson.devDependencies || {}),
+                        '@vitejs/plugin-react': '^4.3.4'
+                    }
+                    modifiedPkg = true
+                }
+            }
+
+            if (modifiedPkg) {
+                normalizedEntries['package.json'] = {
+                    file: {
+                        contents: JSON.stringify(packageJson, null, 2)
+                    }
+                }
+            }
+
+            if (isViteProject(normalizedEntries) && !normalizedEntries['index.html']) {
+                normalizedEntries['index.html'] = createDefaultViteIndexHtml(normalizedEntries)
+            }
         }
 
         setFileTree(normalizedEntries)
@@ -650,6 +685,11 @@ const Project = () => {
                                                     const nmContents = await container.fs.readdir(`${cwdPath}/node_modules`)
                                                     if (!nmContents || nmContents.length === 0) {
                                                         needsInstall = true
+                                                    } else {
+                                                        const hasViteScript = pkgJson?.scripts && Object.values(pkgJson.scripts).some(s => typeof s === 'string' && s.includes('vite'))
+                                                        if (hasViteScript && !nmContents.includes('vite')) {
+                                                            needsInstall = true
+                                                        }
                                                     }
                                                 }
                                             } catch (fsErr) {

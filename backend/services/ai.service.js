@@ -96,8 +96,7 @@ const model = genAI.getGenerativeModel({
        </example>
     
  IMPORTANT : don't use file name like routes/index.js
-       
-       
+ IMPORTANT : Always ensure package.json includes all required dependencies and devDependencies (such as "vite", "react", "react-dom", "@vitejs/plugin-react", "express", etc.) whenever you write scripts or code using them.
     `
 });
 
