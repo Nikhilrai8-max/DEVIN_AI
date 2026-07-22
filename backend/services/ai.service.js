@@ -1,18 +1,12 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import Groq from "groq-sdk";
 
-if (!process.env.GOOGLE_AI_KEY) {
-    throw new Error("GOOGLE_AI_KEY is missing in environment variables.");
+if (!process.env.GORQ_API_KEY) {
+    throw new Error("GORQ_API_KEY is missing in environment variables.");
 }
 
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_KEY);
+const groq = new Groq({ apiKey: process.env.GORQ_API_KEY });
 
-const model = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash",
-    generationConfig: {
-        temperature: 0.4,
-        responseMimeType: "application/json",
-    },
-    systemInstruction: `
+const systemPrompt = `
 You are a senior MERN Stack Software Engineer with 10+ years of experience.
 
 Rules:
@@ -46,8 +40,7 @@ Response format:
 }
 
 Return ONLY JSON.
-`
-});
+`;
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -59,19 +52,25 @@ export const generateResult = async (prompt) => {
 
         try {
 
-            console.log(`Gemini Request Attempt ${attempt}`);
+            console.log(`Groq Request Attempt ${attempt}`);
 
-            const result = await model.generateContent(prompt);
+            const chatCompletion = await groq.chat.completions.create({
+                messages: [
+                    { role: "system", content: systemPrompt },
+                    { role: "user", content: prompt }
+                ],
+                model: "llama-3.3-70b-versatile",
+                temperature: 0.4,
+                response_format: { type: "json_object" },
+            });
 
-            const response = await result.response;
-
-            return response.text();
+            return chatCompletion.choices[0]?.message?.content || "{}";
 
         } catch (error) {
 
-            console.error(`Gemini Error (Attempt ${attempt}):`, error);
+            console.error(`Groq Error (Attempt ${attempt}):`, error);
 
-            // Retry only if Google servers are busy
+            // Retry only if servers are busy
             if (
                 error?.status === 503 &&
                 attempt < MAX_RETRIES
@@ -89,19 +88,19 @@ export const generateResult = async (prompt) => {
             // Friendly messages
             if (error?.status === 503) {
                 throw new Error(
-                    "Gemini service is currently busy. Please try again in a few moments."
+                    "AI service is currently busy. Please try again in a few moments."
                 );
             }
 
             if (error?.status === 429) {
                 throw new Error(
-                    "Gemini rate limit exceeded. Please wait and try again."
+                    "AI rate limit exceeded. Please wait and try again."
                 );
             }
 
             if (error?.status === 401 || error?.status === 403) {
                 throw new Error(
-                    "Invalid Gemini API Key."
+                    "Invalid Groq API Key."
                 );
             }
 
