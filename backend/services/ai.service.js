@@ -7,7 +7,7 @@ if (!process.env.GOOGLE_AI_KEY) {
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_KEY);
 
 const model = genAI.getGenerativeModel({
-    model: "gemma-4-31b-it",
+    model: "gemini-2.0-flash",
     generationConfig: {
         temperature: 0.4,
         responseMimeType: "application/json",
