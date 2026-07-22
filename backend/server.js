@@ -76,19 +76,28 @@ io.on('connection', socket => {
         if (aiIsPresentInMessage) {
 
 
-            const prompt = message.replace('@ai', '');
+            try {
+                const prompt = message.replace('@ai', '');
 
-            const result = await generateResult(prompt);
+                const result = await generateResult(prompt);
 
-
-            io.to(socket.roomId).emit('project-message', {
-                message: result,
-                sender: {
-                    _id: 'ai',
-                    email: 'AI'
-                }
-            })
-
+                io.to(socket.roomId).emit('project-message', {
+                    message: result,
+                    sender: {
+                        _id: 'ai',
+                        email: 'AI'
+                    }
+                })
+            } catch (err) {
+                console.error('AI generation failed:', err.message);
+                io.to(socket.roomId).emit('project-message', {
+                    message: JSON.stringify({ text: "⚠️ AI Error: " + err.message }),
+                    sender: {
+                        _id: 'ai',
+                        email: 'AI'
+                    }
+                })
+            }
 
             return
         }
