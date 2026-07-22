@@ -130,21 +130,29 @@ const Project = () => {
             console.log(data)
             
             if (data.sender._id == 'ai') {
+                let message = data.message
 
-
-                const message = JSON.parse(data.message)
+                if (typeof message === 'string') {
+                    try {
+                        message = JSON.parse(message)
+                    } catch (err) {
+                        message = { text: data.message }
+                    }
+                }
 
                 console.log(message)
+
+                const normalizedTree = message.fileTree ? normalizeFileEntries(message.fileTree) : null
 
                 if (webContainer && message.fileTree) {
                     writeFilesToContainer(webContainer, normalizedTree, projectMountPoint).catch(() => {})
                 }
 
-                if (message.fileTree) {
+                if (message.fileTree && normalizedTree) {
                     setFileTree(normalizedTree)
                 }
                 setIsLoadingAi(false)
-                setMessages(prevMessages => [ ...prevMessages, data ]) // Update messages state
+                setMessages(prevMessages => [ ...prevMessages, { ...data, message } ]) // Update messages state
             } else {
 
 

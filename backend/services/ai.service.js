@@ -1,10 +1,11 @@
 import Groq from "groq-sdk";
 
-if (!process.env.GORQ_API_KEY) {
-    throw new Error("GORQ_API_KEY is missing in environment variables.");
+const apiKey = process.env.GROQ_API_KEY || process.env.GORQ_API_KEY;
+if (!apiKey) {
+    throw new Error("GROQ_API_KEY or GORQ_API_KEY is missing in environment variables.");
 }
 
-const groq = new Groq({ apiKey: process.env.GORQ_API_KEY });
+const groq = new Groq({ apiKey });
 
 const systemPrompt = `
 You are a senior MERN Stack Software Engineer with 10+ years of experience.
@@ -64,7 +65,8 @@ export const generateResult = async (prompt) => {
                 response_format: { type: "json_object" },
             });
 
-            return chatCompletion.choices[0]?.message?.content || "{}";
+            const content = chatCompletion.choices[0]?.message?.content;
+            return typeof content === 'string' ? content : JSON.stringify(content || {});
 
         } catch (error) {
 
