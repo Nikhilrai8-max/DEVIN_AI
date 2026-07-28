@@ -81,8 +81,10 @@ io.on('connection', socket => {
 
                 const result = await generateResult(prompt);
 
+                const aiMessage = typeof result === 'string' ? result : JSON.stringify(result ?? {})
+
                 io.to(socket.roomId).emit('project-message', {
-                    message: result,
+                    message: aiMessage,
                     sender: {
                         _id: 'ai',
                         email: 'AI'

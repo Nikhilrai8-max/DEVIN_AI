@@ -102,16 +102,46 @@ const Project = () => {
 
     }
 
-    function WriteAiMessage(message) {
+    function normalizeAiMessage(message) {
+        if (message == null) {
+            return { text: '' }
+        }
 
-        const messageObject = JSON.parse(message)
+        if (typeof message === 'string') {
+            const trimmed = message.trim()
+
+            if (!trimmed) {
+                return { text: '' }
+            }
+
+            if (trimmed === '[object Object]') {
+                return { text: '' }
+            }
+
+            try {
+                const parsed = JSON.parse(trimmed)
+                return parsed && typeof parsed === 'object' ? parsed : { text: trimmed }
+            } catch (err) {
+                return { text: trimmed }
+            }
+        }
+
+        if (typeof message === 'object') {
+            return message
+        }
+
+        return { text: String(message) }
+    }
+
+    function WriteAiMessage(message) {
+        const messageObject = normalizeAiMessage(message)
 
         return (
             <div
                 className='overflow-auto bg-slate-950 text-white rounded-sm p-2'
             >
                 <Markdown
-                    children={messageObject.text}
+                    children={messageObject.text || ''}
                     options={{
                         overrides: {
                             code: SyntaxHighlightedCode,
@@ -130,15 +160,7 @@ const Project = () => {
             console.log(data)
             
             if (data.sender._id == 'ai') {
-                let message = data.message
-
-                if (typeof message === 'string') {
-                    try {
-                        message = JSON.parse(message)
-                    } catch (err) {
-                        message = { text: data.message }
-                    }
-                }
+                const message = normalizeAiMessage(data.message)
 
                 console.log(message)
 
