@@ -774,9 +774,9 @@ const Project = () => {
                 </div>
             </section>
 
-            <section className="right bg-gray-900 flex-grow h-full flex overflow-hidden">
+            <section className="right min-w-0 bg-gray-900 flex-grow h-full flex overflow-hidden">
 
-                <div className="explorer h-full max-w-64 min-w-56 bg-gray-800 border-r border-white/10 flex flex-col">
+                <div className="explorer h-full max-w-64 min-w-56 shrink-0 bg-gray-800 border-r border-white/10 flex flex-col">
                     <div className="p-4 border-b border-white/10 text-xs font-semibold text-gray-400 uppercase tracking-wider">Explorer</div>
                     <div className="file-tree w-full flex-grow overflow-auto py-2">
                         {
@@ -797,7 +797,7 @@ const Project = () => {
 
                 </div>
 
-                <div className="code-editor flex flex-col flex-grow h-full shrink">
+                <div className={`code-editor min-w-0 flex flex-col h-full ${iframeUrl ? 'flex-1' : 'flex-grow'}`}>
 
                     <div className="top flex items-center justify-between w-full bg-gray-900 border-b border-white/10 overflow-x-auto">
 
@@ -1063,8 +1063,8 @@ const Project = () => {
 
                 </div>
 
-                {iframeUrl && webContainer &&
-                    (<div className="flex min-w-[24rem] max-w-md flex-col h-full border-l border-white/10 bg-white">
+                {iframeUrl &&
+                    (<div className="flex min-w-0 basis-2/5 flex-1 flex-col h-full border-l border-white/10 bg-white">
                         <div className="address-bar flex items-center gap-2 p-2 bg-gray-100 border-b border-gray-300">
                             <div className="flex gap-1 pl-2">
                                 <div className="w-3 h-3 rounded-full bg-red-400"></div>
@@ -1073,10 +1073,10 @@ const Project = () => {
                             </div>
                             <input type="text"
                                 onChange={(e) => setIframeUrl(e.target.value)}
-                                value={iframeUrl} className="flex-grow p-1.5 px-3 bg-white border border-gray-300 rounded-md text-sm text-gray-700 outline-none focus:border-blue-400 ml-2" />
+                                value={iframeUrl} className="min-w-0 flex-grow p-1.5 px-3 bg-white border border-gray-300 rounded-md text-sm text-gray-700 outline-none focus:border-blue-400 ml-2" />
                             <button onClick={() => setIframeUrl(null)} className="p-1.5 text-gray-500 hover:text-gray-800 rounded hover:bg-gray-200"><i className="ri-close-line text-lg"></i></button>
                         </div>
-                        <iframe src={iframeUrl} className="w-full h-full bg-white"></iframe>
+                        <iframe title="Live project preview" src={iframeUrl} className="min-h-0 w-full flex-1 bg-white"></iframe>
                     </div>)
                 }
 
