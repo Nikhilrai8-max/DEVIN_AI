@@ -5,7 +5,7 @@ import { Server } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import mongoose from 'mongoose';
 import projectModel from './models/project.model.js';
-import { generateResult } from './services/ai.service.js';
+import { generateAgentProposal, generateResult } from './services/ai.service.js';
 
 const port = process.env.PORT || 3000;
 
@@ -47,6 +47,14 @@ io.use(async (socket, next) => {
 
         socket.user = decoded;
 
+        const isProjectMember = socket.project && (
+            socket.project.owner.toString() === decoded.id ||
+            socket.project.users.some(userId => userId.toString() === decoded.id)
+        );
+        if (!isProjectMember) {
+            return next(new Error('Project access denied'));
+        }
+
         next();
 
     } catch (error) {
@@ -65,6 +73,32 @@ io.on('connection', socket => {
 
 
     socket.join(socket.roomId);
+
+    socket.on('agent-request', async data => {
+        const task = typeof data?.task === 'string' ? data.task.trim() : '';
+        if (!task || task.length > 4000) {
+            return socket.emit('agent-proposal', { error: 'Task must be between 1 and 4000 characters.' });
+        }
+
+        try {
+            const project = await projectModel.findOne({
+                _id: socket.project._id,
+                users: socket.user.id,
+            });
+            if (!project) {
+                return socket.emit('agent-proposal', { error: 'Project access denied.' });
+            }
+
+            const proposal = await generateAgentProposal(task, project.fileTree, data?.testOutput);
+            io.to(socket.roomId).emit('agent-proposal', {
+                proposal,
+                baseFileTree: project.fileTree,
+                requestedBy: { _id: socket.user.id, username: socket.user.username },
+            });
+        } catch (error) {
+            socket.emit('agent-proposal', { error: error.message || 'The agent could not prepare a proposal.' });
+        }
+    });
 
     socket.on('project-message', async data => {
 

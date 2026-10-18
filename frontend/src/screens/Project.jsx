@@ -44,6 +44,10 @@ const Project = () => {
     const [ fileTree, setFileTree ] = useState({})
 
     const [ isLoadingAi, setIsLoadingAi ] = useState(false)
+    const [ agentProposal, setAgentProposal ] = useState(null)
+    const [ isAgentLoading, setIsAgentLoading ] = useState(false)
+    const [ testStatus, setTestStatus ] = useState('')
+    const [ testOutput, setTestOutput ] = useState('')
 
     const [ currentFile, setCurrentFile ] = useState(null)
     const [ openFiles, setOpenFiles ] = useState([])
@@ -89,17 +93,40 @@ const Project = () => {
     const send = () => {
         if (!message || !message.trim()) return;
 
-        if (message.includes('@ai')) {
+        const trimmedMessage = message.trim()
+        if (trimmedMessage.startsWith('@agent')) {
+            const task = trimmedMessage.replace(/^@agent\s*/, '').trim()
+            if (!task) return
+
+            setIsAgentLoading(true)
+            setAgentProposal(null)
+            setMessages(prevMessages => [ ...prevMessages, { sender: user, message: trimmedMessage } ])
+            sendMessage('agent-request', { task })
+            setMessage('')
+            return
+        }
+
+        if (trimmedMessage.includes('@ai')) {
             setIsLoadingAi(true)
         }
 
         sendMessage('project-message', {
-            message,
+            message: trimmedMessage,
             sender: user
         })
-        setMessages(prevMessages => [ ...prevMessages, { sender: user, message } ]) // Update messages state
+        setMessages(prevMessages => [ ...prevMessages, { sender: user, message: trimmedMessage } ])
         setMessage("")
 
+    }
+
+    const requestFailureFix = () => {
+        if (!testOutput.trim()) return
+        setIsAgentLoading(true)
+        setAgentProposal(null)
+        sendMessage('agent-request', {
+            task: 'Fix the failures reported by the most recent test run. Make only the changes needed to address these failures.',
+            testOutput,
+        })
     }
 
     function normalizeAiMessage(message) {
@@ -155,7 +182,7 @@ const Project = () => {
 
         initializeSocket(project._id)
 
-        receiveMessage('project-message', data => {
+        const removeMessageListener = receiveMessage('project-message', data => {
 
             console.log(data)
             
@@ -182,6 +209,18 @@ const Project = () => {
             }
         })
 
+        const removeProposalListener = receiveMessage('agent-proposal', data => {
+            setIsAgentLoading(false)
+            if (data.error) {
+                setMessages(prevMessages => [ ...prevMessages, {
+                    sender: { _id: 'ai', email: 'AI' },
+                    message: { text: data.error },
+                } ])
+                return
+            }
+            setAgentProposal({ ...data, baseFileTree: normalizeFileEntries(data.baseFileTree || {}) })
+        })
+
 
         axios.get(`/projects/get-project/${location.state.project._id}`).then(res => {
 
@@ -202,6 +241,11 @@ const Project = () => {
             console.log(err)
 
         })
+
+        return () => {
+            removeMessageListener?.()
+            removeProposalListener?.()
+        }
 
     }, [collaboratorSearch])
 
@@ -266,6 +310,92 @@ const Project = () => {
         }).catch(err => {
             console.log(err)
         })
+    }
+
+    function getFileContents(tree, path) {
+        const entry = tree?.[path]
+        if (typeof entry === 'string') return entry
+        return entry?.file?.contents ?? entry?.contents ?? null
+    }
+
+    const applyAgentProposal = async () => {
+        if (!agentProposal?.proposal || !Array.isArray(agentProposal.proposal.changes)) return
+
+        const updatedTree = { ...fileTree }
+        for (const change of agentProposal.proposal.changes) {
+            const currentContents = getFileContents(fileTree, change.path)
+            const baseContents = getFileContents(agentProposal.baseFileTree, change.path)
+            if (currentContents !== baseContents) {
+                setRunStatus(`Cannot apply proposal: ${change.path} changed after the agent created this proposal.`)
+                return
+            }
+            if (change.action === 'create' && currentContents !== null) {
+                setRunStatus(`Cannot apply proposal: ${change.path} already exists.`)
+                return
+            }
+            if ((change.action === 'update' || change.action === 'delete') && currentContents === null) {
+                setRunStatus(`Cannot apply proposal: ${change.path} no longer exists.`)
+                return
+            }
+            if (change.action === 'delete') {
+                delete updatedTree[change.path]
+            } else {
+                updatedTree[change.path] = { file: { contents: change.content } }
+            }
+        }
+
+        setFileTree(updatedTree)
+        saveFileTree(updatedTree)
+        if (webContainer) {
+            await writeFilesToContainer(webContainer, updatedTree, projectMountPoint)
+            for (const change of agentProposal.proposal.changes) {
+                if (change.action === 'delete') {
+                    await webContainer.fs.rm(`${projectMountPoint}/${change.path}`, { force: true }).catch(() => {})
+                }
+            }
+        }
+        setCurrentFile(agentProposal.proposal.changes.find(change => change.action !== 'delete')?.path || currentFile)
+        setOpenFiles(prev => [ ...new Set([ ...prev, ...agentProposal.proposal.changes.filter(change => change.action !== 'delete').map(change => change.path) ]) ])
+        setAgentProposal(null)
+        setRunStatus('Approved changes applied. Run tests to verify the project.')
+    }
+
+    const runProjectTests = async () => {
+        try {
+            const container = webContainer || await getWebContainer()
+            if (!webContainer) setWebContainer(container)
+            await container.fs.mkdir(projectMountPoint, { recursive: true })
+            await writeFilesToContainer(container, fileTree, projectMountPoint)
+
+            const packageJson = parsePackageJson(fileTree)
+            if (!packageJson?.scripts?.test) {
+                setTestOutput('No test script is configured in package.json.')
+                setTestStatus('Tests unavailable')
+                return
+            }
+
+            setTestStatus('Running tests...')
+            const process = await container.spawn('npm', ['test'], {
+                cwd: projectMountPoint,
+                output: true,
+                stdout: true,
+                stderr: true,
+            })
+            const reader = process.output.getReader()
+            let output = ''
+            while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+                output += value
+            }
+            const exitCode = await process.exit
+            setTestOutput(output || `Test process exited with code ${exitCode}.`)
+            setTestStatus(exitCode === 0 ? 'Tests passed' : `Tests failed (exit ${exitCode})`)
+        } catch (error) {
+            const output = error?.message || 'Unable to run tests.'
+            setTestOutput(output)
+            setTestStatus('Test run failed')
+        }
     }
 
     function normalizeFileEntries(tree) {
@@ -581,6 +711,15 @@ const Project = () => {
                                 </div>
                             </div>
                         )}
+                        {isAgentLoading && (
+                            <div className="flex flex-col items-start max-w-[85%]">
+                                <small className="mb-1 ml-1 text-xs text-gray-400">agent</small>
+                                <div className="flex items-center gap-3 rounded-2xl border border-emerald-500/20 bg-gray-900 p-4 text-gray-100">
+                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-emerald-400 border-t-transparent"></div>
+                                    <p className="text-sm">Inspecting project and preparing a proposal...</p>
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     <div className="inputField w-full flex absolute bottom-0 p-4 bg-gray-800/90 backdrop-blur-md border-t border-white/10">
@@ -589,12 +728,25 @@ const Project = () => {
                                 value={message}
                                 onChange={(e) => setMessage(e.target.value)}
                                 onKeyDown={(e) => { if (e.key === 'Enter') send(); }}
-                                className='p-3 px-4 bg-transparent border-none outline-none flex-grow text-white placeholder-gray-500' type="text" placeholder='Type a message...' />
+                                className='p-3 px-4 bg-transparent border-none outline-none flex-grow text-white placeholder-gray-500' type="text" placeholder='Message, @ai question, or @agent task...' />
                             <button
                                 onClick={send}
                                 className='px-5 bg-blue-600 hover:bg-blue-500 text-white transition-colors flex items-center justify-center'><i className="ri-send-plane-fill text-lg"></i></button>
                         </div>
                     </div>
+                    {testStatus && (
+                        <div className="absolute bottom-20 left-4 right-4 z-10 rounded-lg border border-white/10 bg-gray-900 p-3 text-xs text-gray-300">
+                            <div className="flex items-center justify-between gap-2">
+                                <span>{testStatus}</span>
+                                {testOutput && !testStatus.includes('passed') && (
+                                    <button onClick={requestFailureFix} disabled={isAgentLoading} className="text-amber-300 hover:text-amber-200 disabled:opacity-50">
+                                        <i className="ri-tools-line mr-1"></i>Fix failures
+                                    </button>
+                                )}
+                            </div>
+                            <pre className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap text-[11px] text-gray-400">{testOutput}</pre>
+                        </div>
+                    )}
                 </div>
                 <div className={`sidePanel w-full h-full flex flex-col gap-2 bg-gray-900 border-r border-white/10 absolute transition-transform duration-300 ease-in-out z-20 ${isSidePanelOpen ? 'translate-x-0' : '-translate-x-full'} top-0`}>
                     <header className='flex justify-between items-center p-4 bg-gray-900 border-b border-white/10'>
@@ -664,6 +816,14 @@ const Project = () => {
                         </div>
 
                         <div className="actions flex gap-2 p-2">
+                            <button
+                                onClick={runProjectTests}
+                                disabled={testStatus === 'Running tests...'}
+                                className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white rounded-md flex items-center gap-2 text-sm font-medium transition-colors"
+                                title="Run the project's npm test script"
+                            >
+                                <i className="ri-flask-line text-lg"></i> Test
+                            </button>
                             <button
                                 onClick={async () => {
                                     try {
@@ -922,6 +1082,64 @@ const Project = () => {
 
             </section>
         </div>
+
+                {agentProposal?.proposal && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+                        <section className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-white/15 bg-slate-950 shadow-2xl" aria-labelledby="agent-review-title">
+                            <header className="flex items-start justify-between gap-4 border-b border-white/10 px-6 py-4">
+                                <div>
+                                    <p className="text-xs font-semibold uppercase tracking-wider text-emerald-400">Agent proposal</p>
+                                    <h2 id="agent-review-title" className="mt-1 text-lg font-bold text-white">Review changes before applying</h2>
+                                    <p className="mt-1 text-sm text-gray-300">{agentProposal.proposal.summary || 'The agent prepared the following changes.'}</p>
+                                </div>
+                                <button onClick={() => setAgentProposal(null)} className="rounded p-2 text-gray-400 hover:bg-white/10 hover:text-white" aria-label="Close proposal">
+                                    <i className="ri-close-line text-xl"></i>
+                                </button>
+                            </header>
+                            <div className="overflow-y-auto px-6 py-4">
+                                <h3 className="text-sm font-semibold text-white">Plan</h3>
+                                <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-gray-300">
+                                    {agentProposal.proposal.plan.map((step, index) => <li key={`${index}-${step}`}>{step}</li>)}
+                                </ol>
+                                <h3 className="mt-5 text-sm font-semibold text-white">Proposed files ({agentProposal.proposal.changes.length})</h3>
+                                <div className="mt-2 space-y-3">
+                                    {agentProposal.proposal.changes.map(change => {
+                                        const previous = getFileContents(agentProposal.baseFileTree, change.path)
+                                        return (
+                                            <article key={change.path} className="overflow-hidden rounded-lg border border-white/10">
+                                                <div className="flex items-center justify-between gap-3 border-b border-white/10 bg-white/5 px-3 py-2">
+                                                    <code className="break-all text-xs text-gray-200">{change.path}</code>
+                                                    <span className={`shrink-0 text-xs font-semibold ${change.action === 'create' ? 'text-emerald-400' : change.action === 'delete' ? 'text-rose-400' : 'text-amber-300'}`}>{change.action}</span>
+                                                </div>
+                                                <div className="grid gap-px bg-white/10 md:grid-cols-2">
+                                                    <div className="min-w-0 bg-slate-950 p-3">
+                                                        <p className="mb-2 text-[10px] font-bold uppercase text-rose-300">Before</p>
+                                                        <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all text-xs text-gray-400">{previous ?? '(new file)'}</pre>
+                                                    </div>
+                                                    <div className="min-w-0 bg-slate-950 p-3">
+                                                        <p className="mb-2 text-[10px] font-bold uppercase text-emerald-300">After</p>
+                                                        <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all text-xs text-gray-200">{change.action === 'delete' ? '(file will be deleted)' : change.content}</pre>
+                                                    </div>
+                                                </div>
+                                            </article>
+                                        )
+                                    })}
+                                    {agentProposal.proposal.changes.length === 0 && <p className="text-sm text-gray-400">No file changes proposed.</p>}
+                                </div>
+                            </div>
+                            <footer className="flex flex-wrap justify-end gap-2 border-t border-white/10 px-6 py-4">
+                                <button onClick={() => setAgentProposal(null)} className="rounded-md border border-white/15 px-4 py-2 text-sm text-gray-300 hover:bg-white/5">Reject</button>
+                                <button
+                                    onClick={applyAgentProposal}
+                                    disabled={agentProposal.proposal.changes.length === 0}
+                                    className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                    <i className="ri-check-line mr-1"></i>Approve & Apply
+                                </button>
+                            </footer>
+                        </section>
+                    </div>
+                )}
 
             {isModalOpen && (
                 <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">

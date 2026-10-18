@@ -21,21 +21,16 @@ This AI assistant can understand tasks, generate code, debug issues, explain log
 
 ## 🧠 Tech Stack
 
-* **Frontend:** React / Next.js
+* **Frontend:** React
 * **Backend:** Node.js / Express
-* **AI Model:** Google Gemini API
-* **Database:** MongoDB / Firebase
+* **AI Model:** Gorq API
+* **Database:** MongoDB 
 * **Authentication:** JWT / Firebase Auth
 * **Deployment:** Vercel / Render 
 
 ---
 
-## 📸 Screenshots
 
-*Add screenshots of your chatbot UI here.*
-![alt text](image.png)
-
----
 
 ## ⚙️ Installation
 

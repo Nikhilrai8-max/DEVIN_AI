@@ -92,7 +92,11 @@ export const getProjectById = async (req, res) => {
 
     try {
 
-        const project = await projectService.getProjectById({ projectId });
+        const project = await projectService.getProjectById({ projectId, userId: req.user.id });
+
+        if (!project) {
+            return res.status(404).json({ error: 'Project not found or access denied' })
+        }
 
         return res.status(200).json({
             project
@@ -118,8 +122,13 @@ export const updateFileTree = async (req, res) => {
 
         const project = await projectService.updateFileTree({
             projectId,
-            fileTree
+            fileTree,
+            userId: req.user.id
         })
+
+        if (!project) {
+            return res.status(404).json({ error: 'Project not found or access denied' })
+        }
 
         return res.status(200).json({
             project

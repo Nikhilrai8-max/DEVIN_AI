@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildSystemPrompt, normalizeModelResponse } from '../services/ai.service.js';
+import { buildAgentSystemPrompt, buildSystemPrompt, normalizeAgentProposal, normalizeModelResponse } from '../services/ai.service.js';
 
 test('buildSystemPrompt requests detailed answers and project files', () => {
     const prompt = buildSystemPrompt();
@@ -22,4 +22,38 @@ test('normalizeModelResponse parses JSON content when present', () => {
 
     assert.equal(result.text, 'Parsed response');
     assert.deepEqual(result.fileTree, {});
+});
+
+test('agent prompt requests a plan and reviewable complete file changes', () => {
+    const prompt = buildAgentSystemPrompt();
+
+    assert.match(prompt, /"plan"/);
+    assert.match(prompt, /complete file contents/i);
+    assert.match(prompt, /Never claim that tests were run/i);
+});
+
+test('normalizeAgentProposal accepts valid changes and canonicalizes paths', () => {
+    const proposal = normalizeAgentProposal({
+        summary: 'Add a page',
+        plan: ['Create the page'],
+        changes: [{ path: 'src\\page.jsx', action: 'create', content: 'export default function Page() {}' }],
+    });
+
+    assert.equal(proposal.changes[0].path, 'src/page.jsx');
+    assert.equal(proposal.changes[0].action, 'create');
+});
+
+test('normalizeAgentProposal rejects unsafe and duplicate paths', () => {
+    assert.throws(() => normalizeAgentProposal({
+        plan: [],
+        changes: [{ path: '../outside.txt', action: 'create', content: 'nope' }],
+    }), /unsafe file path/i);
+
+    assert.throws(() => normalizeAgentProposal({
+        plan: [],
+        changes: [
+            { path: 'src/page.jsx', action: 'create', content: 'one' },
+            { path: 'src/page.jsx', action: 'update', content: 'two' },
+        ],
+    }), /duplicate file paths/i);
 });

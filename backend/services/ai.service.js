@@ -14,6 +14,7 @@ You are a senior MERN Stack Software Engineer with 10+ years of experience.
 
 Rules:
 - Return ONLY valid, complete JSON. Never return partial or truncated JSON.
+- Provide detailed explanations when the user asks a question.
 - KEEP RESPONSES CONCISE. Generate minimal but functional code.
 - For projects: create a SIMPLE, single-tier structure. Use only essential files (no separate client/server folders unless explicitly asked).
 - Limit file count to 5-8 files maximum.
@@ -46,6 +47,25 @@ Response format:
 IMPORTANT: Keep total response under 4000 tokens. Return ONLY valid JSON.
 `;
 
+export const buildAgentSystemPrompt = () => `
+You are a coding agent. Inspect the supplied project files and the user's task, then propose a small, reviewable change set.
+Return ONLY valid JSON with this shape:
+{
+    "summary": "short explanation",
+    "plan": ["step 1", "step 2"],
+    "changes": [
+        { "path": "relative/file/path", "action": "create|update|delete", "content": "complete new file contents; empty for delete" }
+    ]
+}
+Rules:
+- Never claim that tests were run. Tests are run separately by the workspace.
+- Include complete file contents for create and update operations.
+- Use delete with empty content only when the task clearly requires removing a file.
+- Keep changes scoped to the requested task and limit the proposal to 20 files.
+- Never use absolute paths or paths containing . or .. path segments.
+- If no code changes are needed, return an empty changes array and explain why in summary.
+`;
+
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 export const normalizeModelResponse = (content) => {
@@ -70,7 +90,7 @@ export const normalizeModelResponse = (content) => {
     return { text: trimmed };
 };
 
-export const generateResult = async (prompt) => {
+export const generateResult = async (prompt, systemPrompt = buildSystemPrompt()) => {
 
     const MAX_RETRIES = 3;
 
@@ -87,7 +107,7 @@ export const generateResult = async (prompt) => {
 
             const requestParams = {
                 messages: [
-                    { role: "system", content: buildSystemPrompt() },
+                    { role: "system", content: systemPrompt },
                     { role: "user", content: prompt }
                 ],
                 model: "openai/gpt-oss-120b",
@@ -158,4 +178,65 @@ export const generateResult = async (prompt) => {
             );
         }
     }
+};
+
+export const normalizeAgentProposal = (proposal) => {
+    if (!proposal || typeof proposal !== 'object' || Array.isArray(proposal)) {
+        throw new Error('AI returned an invalid proposal.');
+    }
+
+    if (!Array.isArray(proposal.plan) || !Array.isArray(proposal.changes)) {
+        throw new Error('AI proposal must include a plan and changes list.');
+    }
+
+    if (proposal.changes.length > 20) {
+        throw new Error('AI proposal exceeds the 20-file limit.');
+    }
+
+    const seenPaths = new Set();
+    const changes = proposal.changes.map((change) => {
+        if (!change || typeof change !== 'object') {
+            throw new Error('AI proposal contains an invalid file change.');
+        }
+
+        const path = typeof change.path === 'string' ? change.path.replace(/\\/g, '/') : '';
+        const pathParts = path.split('/');
+        if (!path || path.startsWith('/') || pathParts.some((part) => !part || part === '.' || part === '..')) {
+            throw new Error('AI proposal contains an unsafe file path.');
+        }
+        if (seenPaths.has(path)) {
+            throw new Error('AI proposal contains duplicate file paths.');
+        }
+        seenPaths.add(path);
+
+        if (!['create', 'update', 'delete'].includes(change.action)) {
+            throw new Error('AI proposal contains an unsupported file action.');
+        }
+        if (change.action !== 'delete' && typeof change.content !== 'string') {
+            throw new Error('AI proposal file contents must be strings.');
+        }
+
+        return {
+            path,
+            action: change.action,
+            content: change.action === 'delete' ? '' : change.content,
+        };
+    });
+
+    return {
+        summary: typeof proposal.summary === 'string' ? proposal.summary : '',
+        plan: proposal.plan.filter((step) => typeof step === 'string').slice(0, 10),
+        changes,
+    };
+};
+
+export const generateAgentProposal = async (task, fileTree, testOutput = '') => {
+    const projectFiles = JSON.stringify(fileTree || {});
+    const prompt = [
+        `Task:\n${task}`,
+        `Project files (JSON):\n${projectFiles.slice(0, 80000)}`,
+        testOutput ? `Recent test output:\n${testOutput.slice(-12000)}` : '',
+    ].filter(Boolean).join('\n\n');
+
+    return normalizeAgentProposal(await generateResult(prompt, buildAgentSystemPrompt()));
 };
