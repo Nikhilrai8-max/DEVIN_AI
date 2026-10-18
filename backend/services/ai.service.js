@@ -88,7 +88,7 @@ export const generateResult = async (prompt) => {
                     { role: "system", content: buildSystemPrompt() },
                     { role: "user", content: prompt }
                 ],
-                model: "llama-3.1-8b-instant",
+                model: "openai/gpt-oss-20b",
                 temperature: 0.6,
                 response_format: { type: "json_object" },
             });
