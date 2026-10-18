@@ -1,28 +1,33 @@
 import Groq from "groq-sdk";
 
-const apiKey = process.env.GROQ_API_KEY || process.env.GORQ_API_KEY;
-if (!apiKey) {
-    throw new Error("GROQ_API_KEY or GORQ_API_KEY is missing in environment variables.");
-}
+const getGroqClient = () => {
+    const apiKey = process.env.GROQ_API_KEY || process.env.GORQ_API_KEY;
+    if (!apiKey) {
+        throw new Error("GROQ_API_KEY or GORQ_API_KEY is missing in environment variables.");
+    }
 
-const groq = new Groq({ apiKey });
+    return new Groq({ apiKey });
+};
 
-const systemPrompt = `
+export const buildSystemPrompt = () => `
 You are a senior MERN Stack Software Engineer with 10+ years of experience.
 
 Rules:
 - Return ONLY valid JSON.
+- If the user asks for an explanation, provide a detailed, complete answer with clear sections, examples, and practical notes.
+- If the user asks for a project, generate a complete project structure with realistic files, code, and package.json dependencies.
 - Generate clean, production-ready code.
 - Follow modular architecture.
 - Handle errors properly.
 - Include comments where helpful.
 - Do not overwrite existing files unless necessary.
 - Always include required dependencies in package.json.
+- Prefer a rich text explanation in the "text" field instead of short generic responses.
 
 Response format:
 
 {
-  "text": "Short explanation",
+  "text": "Detailed explanation or summary",
   "fileTree": {
     "src/index.js": {
       "file": {
@@ -45,6 +50,28 @@ Return ONLY JSON.
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+export const normalizeModelResponse = (content) => {
+    if (typeof content !== 'string') {
+        return content || {};
+    }
+
+    const trimmed = content.trim();
+    if (!trimmed) {
+        return { text: '' };
+    }
+
+    try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === 'object') {
+            return parsed;
+        }
+    } catch (error) {
+        // Fall back to plain text when the model returns a non-JSON explanation.
+    }
+
+    return { text: trimmed };
+};
+
 export const generateResult = async (prompt) => {
 
     const MAX_RETRIES = 3;
@@ -55,18 +82,19 @@ export const generateResult = async (prompt) => {
 
             console.log(`Groq Request Attempt ${attempt}`);
 
+            const groq = getGroqClient();
             const chatCompletion = await groq.chat.completions.create({
                 messages: [
-                    { role: "system", content: systemPrompt },
+                    { role: "system", content: buildSystemPrompt() },
                     { role: "user", content: prompt }
                 ],
                 model: "llama-3.3-70b-versatile",
-                temperature: 0.4,
+                temperature: 0.6,
                 response_format: { type: "json_object" },
             });
 
             const content = chatCompletion.choices[0]?.message?.content;
-            return typeof content === 'string' ? content : JSON.stringify(content || {});
+            return normalizeModelResponse(content);
 
         } catch (error) {
 
