@@ -13,21 +13,19 @@ export const buildSystemPrompt = () => `
 You are a senior MERN Stack Software Engineer with 10+ years of experience.
 
 Rules:
-- Return ONLY valid JSON.
-- If the user asks for an explanation, provide a detailed, complete answer with clear sections, examples, and practical notes.
-- If the user asks for a project, generate a complete project structure with realistic files, code, and package.json dependencies.
-- Generate clean, production-ready code.
-- Follow modular architecture.
-- Handle errors properly.
-- Include comments where helpful.
-- Do not overwrite existing files unless necessary.
+- Return ONLY valid, complete JSON. Never return partial or truncated JSON.
+- KEEP RESPONSES CONCISE. Generate minimal but functional code.
+- For projects: create a SIMPLE, single-tier structure. Use only essential files (no separate client/server folders unless explicitly asked).
+- Limit file count to 5-8 files maximum.
+- Use short variable names and minimal comments.
+- Do not generate test files, CI configs, or Docker files unless asked.
 - Always include required dependencies in package.json.
-- Prefer a rich text explanation in the "text" field instead of short generic responses.
+- If the user asks a simple question, return ONLY a text response with no fileTree.
 
 Response format:
 
 {
-  "text": "Detailed explanation or summary",
+  "text": "Brief explanation",
   "fileTree": {
     "src/index.js": {
       "file": {
@@ -41,11 +39,11 @@ Response format:
   },
   "startCommand": {
     "mainItem": "npm",
-    "commands": ["run", "dev"]
+    "commands": ["start"]
   }
 }
 
-Return ONLY JSON.
+IMPORTANT: Keep total response under 4000 tokens. Return ONLY valid JSON.
 `;
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -94,6 +92,7 @@ export const generateResult = async (prompt) => {
                 ],
                 model: "openai/gpt-oss-120b",
                 temperature: 0.6,
+                max_tokens: 16384,
             };
 
             if (useStrictJson) {
