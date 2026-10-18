@@ -83,15 +83,24 @@ export const generateResult = async (prompt) => {
             console.log(`Groq Request Attempt ${attempt}`);
 
             const groq = getGroqClient();
-            const chatCompletion = await groq.chat.completions.create({
+
+            // On JSON validation failure retries, drop the strict response_format
+            const useStrictJson = attempt === 1;
+
+            const requestParams = {
                 messages: [
                     { role: "system", content: buildSystemPrompt() },
                     { role: "user", content: prompt }
                 ],
-                model: "openai/gpt-oss-20b",
+                model: "openai/gpt-oss-120b",
                 temperature: 0.6,
-                response_format: { type: "json_object" },
-            });
+            };
+
+            if (useStrictJson) {
+                requestParams.response_format = { type: "json_object" };
+            }
+
+            const chatCompletion = await groq.chat.completions.create(requestParams);
 
             const content = chatCompletion.choices[0]?.message?.content;
             return normalizeModelResponse(content);
@@ -99,6 +108,17 @@ export const generateResult = async (prompt) => {
         } catch (error) {
 
             console.error(`Groq Error (Attempt ${attempt}):`, error);
+
+            // Retry on JSON validation failure (drop strict JSON mode on next attempt)
+            if (
+                error?.status === 400 &&
+                error?.error?.error?.code === 'json_validate_failed' &&
+                attempt < MAX_RETRIES
+            ) {
+                console.log(`JSON validation failed, retrying without strict JSON mode...`);
+                await sleep(1000);
+                continue;
+            }
 
             // Retry only if servers are busy
             if (
